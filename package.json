@@ -1,7 +1,6 @@
 {
-	"name": "sortablejs",
-	"exportName": "Sortable",
-	"version": "1.8.2",
+	"name": "sortablejs-swap",
+	"version": "1.0.1",
 	"devDependencies": {
 		"gulp": "^4.0.0",
 		"gulp-each": "^0.5.0",
@@ -13,8 +12,7 @@
 	"description": "Minimalist JavaScript library for reorderable drag-and-drop lists on modern browsers and touch devices. No jQuery. Supports AngularJS and any CSS library, e.g. Bootstrap.",
 	"main": "Sortable.js",
 	"scripts": {
-		"http-server": "http-server -s ./",
-		"prepublish": "gulp build"
+		"http-server": "http-server -s ./"
 	},
 	"contributors": [
 		"Konstantin Lebedev <ibnRubaXa@gmail.com>",
@@ -29,15 +27,7 @@
 		"Sortable.min.js"
 	],
 	"keywords": [
-		"sortable",
-		"reorder",
-		"drag",
-		"meteor",
-		"angular",
-		"ng-sortable",
-		"react",
-		"vue",
-		"mixin"
+
 	],
 	"license": "MIT",
 	"spm": {
