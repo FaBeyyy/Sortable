@@ -30,10 +30,13 @@
 	var dragEl,
 		parentEl,
 		ghostEl,
-		cloneEl,
 		rootEl,
 		nextEl,
 		lastDownEl,
+
+		cloneEl,
+		multiDragClones = [],
+		cloneHidden,
 
 		scrollEl,
 		scrollParentEl,
@@ -56,20 +59,21 @@
 		lastPointerElemX,
 		lastPointerElemY,
 
+		multiDragElements = [],
+		lastMultiDragSelect, // for selection with modifier key down (SHIFT)
+		multiDragSortable,
+
 		tapEvt,
 		touchEvt,
 
 		moved,
 
-
 		lastTarget,
 		lastDirection,
 		pastFirstInvertThresh = false,
 		isCircumstantialInvert = false,
-		lastMode, // 'swap' or 'insert'
 
 		targetMoveDistance,
-
 
 		forRepaintDummy,
 		realDragElRect, // dragEl rect after current animation
@@ -112,7 +116,6 @@
 		})(),
 
 		_silent = false,
-		_alignedSilent = false,
 
 		abs = Math.abs,
 		min = Math.min,
@@ -169,35 +172,9 @@
 			}
 		},
 
-		_isClientInRowColumn = function(x, y, el, axis, options) {
-			var targetRect = _getRect(el),
-				targetS1Opp = axis === 'vertical' ? targetRect.left : targetRect.top,
-				targetS2Opp = axis === 'vertical' ? targetRect.right : targetRect.bottom,
-				mouseOnOppAxis = axis === 'vertical' ? x : y;
-
-			return targetS1Opp < mouseOnOppAxis && mouseOnOppAxis < targetS2Opp;
-		},
-
-		_isElInRowColumn = function(el1, el2, axis) {
-			var el1Rect = el1 === dragEl && realDragElRect || _getRect(el1),
-				el2Rect = el2 === dragEl && realDragElRect || _getRect(el2),
-				el1S1Opp = axis === 'vertical' ? el1Rect.left : el1Rect.top,
-				el1S2Opp = axis === 'vertical' ? el1Rect.right : el1Rect.bottom,
-				el1OppLength = axis === 'vertical' ? el1Rect.width : el1Rect.height,
-				el2S1Opp = axis === 'vertical' ? el2Rect.left : el2Rect.top,
-				el2S2Opp = axis === 'vertical' ? el2Rect.right : el2Rect.bottom,
-				el2OppLength = axis === 'vertical' ? el2Rect.width : el2Rect.height;
-
-			return (
-				el1S1Opp === el2S1Opp ||
-				el1S2Opp === el2S2Opp ||
-				(el1S1Opp + el1OppLength / 2) === (el2S1Opp + el2OppLength / 2)
-			);
-		},
-
 		_getParentAutoScrollElement = function(el, includeSelf) {
 			// skip to window
-			if (!el || !el.getBoundingClientRect) return win;
+			if (!el || !el.getBoundingClientRect) return _getWindowScrollingElement();
 
 			var elem = el;
 			var gotSelf = false;
@@ -209,7 +186,7 @@
 						elem.clientWidth < elem.scrollWidth && (elemCSS.overflowX == 'auto' || elemCSS.overflowX == 'scroll') ||
 						elem.clientHeight < elem.scrollHeight && (elemCSS.overflowY == 'auto' || elemCSS.overflowY == 'scroll')
 					) {
-						if (!elem || !elem.getBoundingClientRect || elem === document.body) return win;
+						if (!elem || !elem.getBoundingClientRect || elem === document.body) return _getWindowScrollingElement();
 
 						if (gotSelf || includeSelf) return elem;
 						gotSelf = true;
@@ -218,7 +195,24 @@
 			/* jshint boss:true */
 			} while (elem = elem.parentNode);
 
-			return win;
+			return _getWindowScrollingElement();
+		},
+
+		_getWindowScrollingElement = function() {
+			if (IE11OrLess) {
+				return document.documentElement;
+			} else {
+				return document.scrollingElement;
+			}
+		},
+
+		_getScrollPosition = function(el) {
+			return [ el.scrollLeft, el.scrollTop ];
+		},
+
+		_scrollBy = function(el, x, y) {
+			el.scrollLeft += x;
+			el.scrollTop += y;
 		},
 
 		_autoScroll = _throttle(function (/**Event*/evt, /**Object*/options, /**HTMLElement*/rootEl, /**Boolean*/isFallback) {
@@ -233,6 +227,8 @@
 
 					winWidth = window.innerWidth,
 					winHeight = window.innerHeight,
+
+					winScroller = _getWindowScrollingElement(),
 
 					scrollThisInstance = false;
 
@@ -279,28 +275,20 @@
 						scrollPosY;
 
 
-					if (el !== win) {
-						scrollWidth = el.scrollWidth;
-						scrollHeight = el.scrollHeight;
+					scrollWidth = el.scrollWidth;
+					scrollHeight = el.scrollHeight;
 
-						css = _css(el);
+					css = _css(el);
 
-						canScrollX = width < scrollWidth && (css.overflowX === 'auto' || css.overflowX === 'scroll');
-						canScrollY = height < scrollHeight && (css.overflowY === 'auto' || css.overflowY === 'scroll');
+					scrollPosX = el.scrollLeft;
+					scrollPosY = el.scrollTop;
 
-						scrollPosX = el.scrollLeft;
-						scrollPosY = el.scrollTop;
-					} else {
-						scrollWidth = document.documentElement.scrollWidth;
-						scrollHeight = document.documentElement.scrollHeight;
-
-						css = _css(document.documentElement);
-
+					if (el === winScroller) {
 						canScrollX = width < scrollWidth && (css.overflowX === 'auto' || css.overflowX === 'scroll' || css.overflowX === 'visible');
 						canScrollY = height < scrollHeight && (css.overflowY === 'auto' || css.overflowY === 'scroll' || css.overflowY === 'visible');
-
-						scrollPosX = document.documentElement.scrollLeft;
-						scrollPosY = document.documentElement.scrollTop;
+					} else {
+						canScrollX = width < scrollWidth && (css.overflowX === 'auto' || css.overflowX === 'scroll');
+						canScrollY = height < scrollHeight && (css.overflowY === 'auto' || css.overflowY === 'scroll');
 					}
 
 					vx = canScrollX && (abs(right - x) <= sens && (scrollPosX + width) < scrollWidth) - (abs(left - x) <= sens && !!scrollPosX);
@@ -339,17 +327,13 @@
 										return;
 									}
 								}
-								if (autoScrolls[this.layer].el === win) {
-									win.scrollTo(win.pageXOffset + scrollOffsetX, win.pageYOffset + scrollOffsetY);
-								} else {
-									autoScrolls[this.layer].el.scrollTop += scrollOffsetY;
-									autoScrolls[this.layer].el.scrollLeft += scrollOffsetX;
-								}
+
+								_scrollBy(autoScrolls[this.layer].el, scrollOffsetX, scrollOffsetY);
 							}).bind({layer: layersOut}), 24);
 						}
 					}
 					layersOut++;
-				} while (options.bubbleScroll && currentParent !== win && (currentParent = _getParentAutoScrollElement(currentParent, false)));
+				} while (options.bubbleScroll && currentParent !== winScroller && (currentParent = _getParentAutoScrollElement(currentParent, false)));
 				scrolling = scrollThisInstance; // in case another function catches scrolling as false in between when it is not
 			}
 		}, 30),
@@ -401,11 +385,6 @@
 			group.revertClone = originalGroup.revertClone;
 
 			options.group = group;
-		},
-
-		_checkAlignment = function(evt) {
-			if (!dragEl || !dragEl.parentNode) return;
-			dragEl.parentNode[expando] && dragEl.parentNode[expando]._computeIsAligned(evt);
 		},
 
 		_isTrueParentSortable = function(el, target) {
@@ -473,6 +452,14 @@
 	document.addEventListener('dragover', nearestEmptyInsertDetectEvent);
 	document.addEventListener('mousemove', nearestEmptyInsertDetectEvent);
 
+
+	var _checkOutsideTargetEl = function(evt) {
+		if (dragEl) {
+			dragEl.parentNode[expando]._isOutsideThisEl(evt.target);
+		}
+	};
+
+
 	/**
 	 * @class  Sortable
 	 * @param  {HTMLElement}  el
@@ -512,13 +499,22 @@
 			ghostClass: 'sortable-ghost',
 			chosenClass: 'sortable-chosen',
 			dragClass: 'sortable-drag',
+			selectedClass: 'sortable-selected', // for multi-drag
 			ignore: 'a, img',
 			filter: null,
 			preventOnFilter: true,
 			animation: 0,
 			easing: null,
 			setData: function (dataTransfer, dragEl) {
-				dataTransfer.setData('Text', dragEl.textContent);
+				var data = '';
+				if (multiDragElements.length) {
+					for (var i = 0; i < multiDragElements.length; i++) {
+						data += (!i ? '' : ', ') + multiDragElements[i].textContent;
+					}
+				} else {
+					data = dragEl.textContent;
+				}
+				dataTransfer.setData('Text', data);
 			},
 			dropBubble: false,
 			dragoverBubble: false,
@@ -534,7 +530,8 @@
 				('PointerEvent' in window) ||
 				window.navigator && ('msPointerEnabled' in window.navigator) // microsoft
 			),
-			emptyInsertThreshold: 5
+			emptyInsertThreshold: 5,
+			multiDrag: false
 		};
 
 
@@ -558,7 +555,12 @@
 		// Bind events
 		if (options.supportPointer) {
 			_on(el, 'pointerdown', this._onTapStart);
+
+			_on(document, 'pointerup', this._deselectMultiDrag);
 		} else {
+			_on(document, 'mouseup', this._deselectMultiDrag);
+			_on(document, 'touchend', this._deselectMultiDrag);
+
 			_on(el, 'mousedown', this._onTapStart);
 			_on(el, 'touchstart', this._onTapStart);
 		}
@@ -577,38 +579,10 @@
 	Sortable.prototype = /** @lends Sortable.prototype */ {
 		constructor: Sortable,
 
-		_computeIsAligned: function(evt) {
-			var target;
-
-			if (ghostEl && !supportCssPointerEvents) {
-				_hideGhostForTarget();
-				target = document.elementFromPoint(evt.clientX, evt.clientY);
-				_unhideGhostForTarget();
-			} else {
-				target = evt.target;
-			}
-
-			target = _closest(target, this.options.draggable, this.el, false);
-			if (_alignedSilent) return;
-			if (!dragEl || dragEl.parentNode !== this.el) return;
-
-			var children = this.el.children;
-			for (var i = 0; i < children.length; i++) {
-				// Don't change for target in case it is changed to aligned before onDragOver is fired
-				if (_closest(children[i], this.options.draggable, this.el, false) && children[i] !== target) {
-					children[i].sortableMouseAligned = _isClientInRowColumn(evt.clientX, evt.clientY, children[i], this._getDirection(evt, null), this.options);
-				}
-			}
-			// Used for nulling last target when not in element, nothing to do with checking if aligned
-			if (!_closest(target, this.options.draggable, this.el, true)) {
+		_isOutsideThisEl: function(target) {
+			if (!this.el.contains(target) && target !== this.el) {
 				lastTarget = null;
 			}
-
-			_alignedSilent = true;
-			setTimeout(function() {
-				_alignedSilent = false;
-			}, 30);
-
 		},
 
 		_getDirection: function(evt, target) {
@@ -629,7 +603,6 @@
 				startIndex;
 
 			_saveInputCheckedState(el);
-
 
 			// IE: Calls events in capture mode if event element is nested. This ensures only correct element's _onTapStart goes through.
 			// This process is also done in _onDragOver
@@ -744,7 +717,7 @@
 
 			} else {
 				// if DnD is enabled (and browser has good autoscrolling), first autoscroll will already scroll, so get parent autoscroll of first autoscroll
-				if (!_this.options.bubbleScroll || _getParentAutoScrollElement(elem, true) === window) {
+				if (!_this.options.bubbleScroll || _getParentAutoScrollElement(elem, true) === _getWindowScrollingElement()) {
 					_clearAutoScrolls();
 					return;
 				}
@@ -886,7 +859,7 @@
 			if (rootEl && dragEl) {
 				if (this.nativeDraggable) {
 					_on(document, 'dragover', this._handleAutoScroll);
-					_on(document, 'dragover', _checkAlignment);
+					_on(document, 'dragover', _checkOutsideTargetEl);
 				}
 				var options = this.options;
 
@@ -926,6 +899,8 @@
 					parent = target;
 				}
 
+				dragEl.parentNode[expando]._isOutsideThisEl(target);
+
 				if (parent) {
 					do {
 						if (parent[expando]) {
@@ -948,7 +923,6 @@
 					/* jshint boss:true */
 					while (parent = parent.parentNode);
 				}
-				dragEl.parentNode[expando]._computeIsAligned(touchEvt);
 
 				_unhideGhostForTarget();
 			}
@@ -957,7 +931,6 @@
 
 		_onTouchMove: function (/**TouchEvent*/evt) {
 			if (tapEvt) {
-				if (!evt.cancelable) return;
 				var	options = this.options,
 					fallbackTolerance = options.fallbackTolerance,
 					fallbackOffset = options.fallbackOffset,
@@ -983,7 +956,6 @@
 				this._handleAutoScroll(touch, true);
 
 
-				moved = true;
 				touchEvt = touch;
 
 
@@ -1028,21 +1000,60 @@
 			var dataTransfer = evt.dataTransfer;
 			var options = _this.options;
 
-			// Setup clone
-			cloneEl = _clone(dragEl);
+			if (!~multiDragElements.indexOf(dragEl) && multiDragSortable) {
+				multiDragSortable[expando]._deselectMultiDrag();
+			}
 
-			cloneEl.draggable = false;
-			cloneEl.style['will-change'] = '';
+			for (var i in multiDragElements) {
+				multiDragElements[i].sortableIndex = _index(multiDragElements[i]);
+			}
+
+			// Sort multi-drag elements
+			multiDragElements = multiDragElements.sort(function(a, b) {
+				return a.sortableIndex - b.sortableIndex;
+			});
+
+
+
+			// Setup clone(s)
+			if (multiDragElements.length) {
+				for (var i = 0; i < multiDragElements.length; i++) {
+					multiDragClones.push(_clone(multiDragElements[i]));
+
+					multiDragClones[i].sortableIndex = multiDragElements[i].sortableIndex;
+
+					multiDragClones[i].draggable = false;
+					multiDragClones[i].style['will-change'] = '';
+
+					_toggleClass(multiDragClones[i], _this.options.selectedClass, false);
+					multiDragElements[i] === dragEl && _toggleClass(multiDragClones[i], _this.options.chosenClass, false);
+				}
+			} else {
+				cloneEl = _clone(dragEl);
+
+				cloneEl.draggable = false;
+				cloneEl.style['will-change'] = '';
+
+				_toggleClass(cloneEl, _this.options.chosenClass, false);
+			}
 
 			this._hideClone();
 
-			_toggleClass(cloneEl, _this.options.chosenClass, false);
-
 
 			// #1143: IFrame support workaround
-			_this._cloneId = _nextTick(function () {
+			_this._cloneId = _nextTick(function() {
+				// Remove all auxiliary multidrag items from el, if sorting enabled
+				// (needs to be next tick, but before clone insert)
+				if (_this.options.sort) {
+					_removeMultiDragElements();
+				}
+
 				if (!_this.options.removeCloneOnHide) {
-					rootEl.insertBefore(cloneEl, dragEl);
+					if (options.multiDrag) {
+						_insertMultiDrag(true);
+					} else {
+						rootEl.insertBefore(cloneEl, dragEl);
+					}
 				}
 				_dispatchEvent(_this, rootEl, 'clone', dragEl);
 			});
@@ -1075,7 +1086,10 @@
 
 			_this._dragStartId = _nextTick(_this._dragStarted.bind(_this, fallback));
 			_on(document, 'selectstart', _this);
+
+			moved = true;
 		},
+
 
 		// Returns true - if no further action is needed (either inserted or another condition)
 		_onDragOver: function (/**Event*/evt) {
@@ -1098,8 +1112,15 @@
 				return;
 			}
 
-			// Return invocation when no further action is needed in another sortable
+			// Return invocation when dragEl is inserted
 			function completed() {
+				if (isOwner) {
+					activeSortable._hideClone();
+				} else {
+					_removeMultiDragElements();
+					activeSortable._showClone(_this);
+				}
+
 				if (activeSortable) {
 					// Set ghost class to new sortable's ghost class
 					_toggleClass(dragEl, putSortable ? putSortable.options.ghostClass : activeSortable.options.ghostClass, false);
@@ -1120,7 +1141,7 @@
 				// no bubbling and not fallback
 				if (!options.dragoverBubble && !evt.rootEl && target !== document) {
 					_this._handleAutoScroll(evt);
-					dragEl.parentNode[expando]._computeIsAligned(evt);
+					dragEl.parentNode[expando]._isOutsideThisEl(evt.target);
 				}
 
 				!options.dragoverBubble && evt.stopPropagation && evt.stopPropagation();
@@ -1139,13 +1160,11 @@
 			}
 
 
-			moved = true;
-
 			target = _closest(target, options.draggable, el, true);
 
 			// target is dragEl or target is animated
 			if (!!_closest(evt.target, null, dragEl, true) || target.animated) {
-				return completed();
+				return true; // not completed() because dragEl not inserted
 			}
 
 			if (target !== dragEl) {
@@ -1169,13 +1188,17 @@
 				dragRect = _getRect(dragEl);
 
 				if (revert) {
-					this._hideClone();
 					parentEl = rootEl; // actualization
+					this._hideClone();
 
-					if (nextEl) {
-						rootEl.insertBefore(dragEl, nextEl);
+					if (multiDragElements.length) {
+						_insertMultiDrag();
 					} else {
-						rootEl.appendChild(dragEl);
+						if (nextEl) {
+							rootEl.insertBefore(dragEl, nextEl);
+						} else {
+							rootEl.appendChild(dragEl);
+						}
 					}
 
 					return completed();
@@ -1193,12 +1216,6 @@
 						targetRect = _getRect(target);
 					}
 
-					if (isOwner) {
-						activeSortable._hideClone();
-					} else {
-						activeSortable._showClone(this);
-					}
-
 					if (_onMove(rootEl, el, dragEl, dragRect, target, targetRect, evt, !!target) !== false) {
 						el.appendChild(dragEl);
 						parentEl = el; // actualization
@@ -1213,42 +1230,26 @@
 				else if (target && target !== dragEl && target.parentNode === el) {
 					var direction = 0,
 						targetBeforeFirstSwap,
-						aligned = target.sortableMouseAligned,
 						differentLevel = dragEl.parentNode !== el,
-						scrolledPastTop = _isScrolledPast(target, axis === 'vertical' ? 'top' : 'left');
+						side1 = axis === 'vertical' ? 'top' : 'left',
+						scrolledPastTop = _isScrolledPast(target, side1) || _isScrolledPast(dragEl, side1),
+						scrollBefore = scrolledPastTop && (scrolledPastTop ? _getScrollPosition(scrolledPastTop)[1] : void 0);
+
 
 					if (lastTarget !== target) {
-						lastMode = null;
-						targetBeforeFirstSwap = _getRect(target)[axis === 'vertical' ? 'top' : 'left'];
+						targetBeforeFirstSwap = _getRect(target)[side1];
 						pastFirstInvertThresh = false;
+						isCircumstantialInvert = options.invertSwap || differentLevel;
 					}
 
-					// Reference: https://www.lucidchart.com/documents/view/10fa0e93-e362-4126-aca2-b709ee56bd8b/0
-					if (
-						_isElInRowColumn(dragEl, target, axis) && aligned ||
-						differentLevel ||
-						scrolledPastTop ||
-						options.invertSwap ||
-						lastMode === 'insert' ||
-						// Needed, in the case that we are inside target and inserted because not aligned... aligned will stay false while inside
-						// and lastMode will change to 'insert', but we must swap
-						lastMode === 'swap'
-					) {
-						// New target that we will be inside
-						if (lastMode !== 'swap') {
-							isCircumstantialInvert = options.invertSwap || differentLevel || scrolling || scrolledPastTop;
-						}
+					direction = _getSwapDirection(
+						evt, target, axis,
+						options.swapThreshold,
+						options.invertedSwapThreshold == null ? options.swapThreshold : options.invertedSwapThreshold,
+						isCircumstantialInvert,
+						lastTarget === target
+					);
 
-						direction = _getSwapDirection(evt, target, axis,
-							options.swapThreshold, options.invertedSwapThreshold == null ? options.swapThreshold : options.invertedSwapThreshold,
-							isCircumstantialInvert,
-							lastTarget === target);
-						lastMode = 'swap';
-					} else {
-						// Insert at position
-						direction = _getInsertDirection(target, options);
-						lastMode = 'insert';
-					}
 					if (direction === 0) return completed();
 
 					realDragElRect = null;
@@ -1273,25 +1274,25 @@
 						_silent = true;
 						setTimeout(_unsilent, 30);
 
-						if (isOwner) {
-							activeSortable._hideClone();
-						} else {
-							activeSortable._showClone(this);
-						}
-
 						if (after && !nextSibling) {
 							el.appendChild(dragEl);
 						} else {
 							target.parentNode.insertBefore(dragEl, after ? nextSibling : target);
 						}
 
+						// Undo chrome's scroll adjustment (has no effect on other browsers)
+						if (scrolledPastTop) {
+							_scrollBy(scrolledPastTop, 0, scrollBefore - _getScrollPosition(scrolledPastTop)[1]);
+						}
+
 						parentEl = dragEl.parentNode; // actualization
 
 						// must be done before animation
 						if (targetBeforeFirstSwap !== undefined && !isCircumstantialInvert) {
-							targetMoveDistance = abs(targetBeforeFirstSwap - _getRect(target)[axis === 'vertical' ? 'top' : 'left']);
+							targetMoveDistance = abs(targetBeforeFirstSwap - _getRect(target)[side1]);
 						}
 						changed();
+
 						!differentLevel && this._animate(targetRect, target);
 						this._animate(dragRect, dragEl);
 
@@ -1365,9 +1366,24 @@
 			_off(document, 'selectstart', this);
 		},
 
+		_deselectMultiDrag: function(evt) {
+			// Only deselect if selection is in this sortable
+			if (multiDragSortable !== this.el) return;
+
+			// Only deselect if target is not item in this sortable
+			if (evt && _closest(evt.target, this.options.draggable, this.el, false)) return;
+
+			for (var i = 0; i < multiDragElements.length; i++) {
+				_toggleClass(multiDragElements[i], this.options.selectedClass, false);
+			}
+			multiDragElements = [];
+		},
+
 		_onDrop: function (/**Event*/evt) {
 			var el = this.el,
-				options = this.options;
+				options = this.options,
+				i, n;
+
 			awaitingDragStarted = false;
 			scrolling = false;
 			isCircumstantialInvert = false;
@@ -1392,10 +1408,78 @@
 				_off(document, 'drop', this);
 				_off(el, 'dragstart', this._onDragStart);
 				_off(document, 'dragover', this._handleAutoScroll);
-				_off(document, 'dragover', _checkAlignment);
 			}
 
 			this._offUpEvents();
+
+
+			// Multi-drag selection
+			if (!moved && options.multiDrag) {
+				_toggleClass(dragEl, options.selectedClass, !~multiDragElements.indexOf(dragEl));
+
+				if (!~multiDragElements.indexOf(dragEl)) {
+					multiDragElements.push(dragEl);
+					dragEl.sortableIndex = _index(dragEl);
+
+					// Modifier activated, select from last to dragEl
+					if (evt.shiftKey && lastMultiDragSelect && this.el.contains(lastMultiDragSelect)) {
+						var lastIndex = _index(lastMultiDragSelect),
+							currentIndex = _index(dragEl);
+
+						if (~lastIndex && ~currentIndex && lastIndex !== currentIndex) {
+							var children = parentEl.children;
+
+
+							if (currentIndex > lastIndex) {
+								i = lastIndex + 1;
+								n = currentIndex;
+							} else {
+								i = currentIndex + 1;
+								n = lastIndex;
+							}
+
+							for (; i < n; i++) {
+								if (~multiDragElements.indexOf(children[i])) continue;
+								children[i].sortableIndex = _index(children[i]);
+								_toggleClass(children[i], options.selectedClass, true);
+								multiDragElements.push(children[i]);
+							}
+						}
+					}
+
+					lastMultiDragSelect = dragEl;
+					multiDragSortable = parentEl;
+				} else {
+					multiDragElements.splice(multiDragElements.indexOf(dragEl), 1);
+					lastMultiDragSelect = null;
+				}
+			}
+
+			// Multi-drag drop
+			if (moved && options.multiDrag && multiDragElements.length) {
+				// Do not "unfold" after around dragEl if sorting disabled (either reverted or never left it's sort:false root)
+				if (parentEl[expando].options.sort) {
+					var firstMultiDragElementIndex = _index(dragEl),
+						firstMultiDragRect = _getRect(dragEl);
+
+					// insert first multi drag at dragEl's position
+					parentEl.insertBefore(multiDragElements[0], dragEl);
+					multiDragElements[0] !== dragEl && parentEl.removeChild(dragEl);
+
+
+					for (i = 1; i < multiDragElements.length; i++) {
+						if (multiDragElements[i - 1].nextSibling) {
+							parentEl.insertBefore(multiDragElements[i], multiDragElements[i - 1].nextSibling);
+						} else {
+							parentEl.appendChild(multiDragElements[i]);
+						}
+
+						this._animate(firstMultiDragRect, multiDragElements[i]);
+					}
+				}
+
+				multiDragSortable = parentEl;
+			}
 
 			if (evt) {
 				if (moved) {
@@ -1418,8 +1502,11 @@
 					_disableDraggable(dragEl);
 					dragEl.style['will-change'] = '';
 
-					// Remove class's
-					_toggleClass(dragEl, putSortable ? putSortable.options.ghostClass : this.options.ghostClass, false);
+					// Remove classes
+					// ghostClass is added in dragStarted
+					if (moved && !awaitingDragStarted) {
+						_toggleClass(dragEl, putSortable ? putSortable.options.ghostClass : this.options.ghostClass, false);
+					}
 					_toggleClass(dragEl, this.options.chosenClass, false);
 
 					// Drag stop event
@@ -1443,10 +1530,10 @@
 						putSortable && putSortable.save();
 					}
 					else {
-						if (dragEl.nextSibling !== nextEl) {
-							// Get the index of the dragged element within its parent
-							newIndex = _index(dragEl, options.draggable);
+						// Get the index of the dragged element within its parent
+						newIndex = _index(dragEl, options.draggable);
 
+						if (dragEl.nextSibling !== nextEl) {
 							if (newIndex >= 0) {
 								// drag & drop within the same list
 								_dispatchEvent(this, rootEl, 'update', dragEl, parentEl, rootEl, oldIndex, newIndex, evt);
@@ -1510,7 +1597,8 @@
 				el.checked = true;
 			});
 
-			savedInputChecked.length = 0;
+			savedInputChecked.length =
+			multiDragClones.length = 0;
 		},
 
 		handleEvent: function (/**Event*/evt) {
@@ -1652,12 +1740,19 @@
 		},
 
 		_hideClone: function() {
-			if (!cloneEl.cloneHidden) {
-				_css(cloneEl, 'display', 'none');
-				cloneEl.cloneHidden = true;
-				if (cloneEl.parentNode && this.options.removeCloneOnHide) {
-					cloneEl.parentNode.removeChild(cloneEl);
+			if (!cloneHidden) {
+				for (var i = 0; i < (multiDragClones.length || 1); i++) {
+					var clone = multiDragClones[i];
+					if (!clone) {
+						clone = cloneEl;
+					}
+
+					_css(clone, 'display', 'none');
+					if (this.options.removeCloneOnHide && clone.parentNode) {
+						clone.parentNode.removeChild(clone);
+					}
 				}
+				cloneHidden = true;
 			}
 		},
 
@@ -1667,21 +1762,30 @@
 				return;
 			}
 
-			if (cloneEl.cloneHidden) {
-				// show clone at dragEl or original position
-				if (rootEl.contains(dragEl) && !this.options.group.revertClone) {
-					rootEl.insertBefore(cloneEl, dragEl);
-				} else if (nextEl) {
-					rootEl.insertBefore(cloneEl, nextEl);
-				} else {
-					rootEl.appendChild(cloneEl);
-				}
 
-				if (this.options.group.revertClone) {
-					this._animate(dragEl, cloneEl);
+			if (cloneHidden) {
+				if (multiDragClones.length) {
+					_insertMultiDrag(true);
+					for (var i = 0; i < multiDragClones.length; i++) {
+						_css(multiDragClones[i], 'display', '');
+					}
+				} else {
+					// show clone at dragEl or original position
+					if (rootEl.contains(dragEl) && !this.options.group.revertClone) {
+						rootEl.insertBefore(cloneEl, dragEl);
+					} else if (nextEl) {
+						rootEl.insertBefore(cloneEl, nextEl);
+					} else {
+						rootEl.appendChild(cloneEl);
+					}
+
+					if (this.options.group.revertClone) {
+						this._animate(dragEl, cloneEl);
+					}
+
+					_css(cloneEl, 'display', '');
 				}
-				_css(cloneEl, 'display', '');
-				cloneEl.cloneHidden = false;
+				cloneHidden = false;
 			}
 		}
 	};
@@ -1831,7 +1935,9 @@
 		evt.to = toEl || rootEl;
 		evt.from = fromEl || rootEl;
 		evt.item = targetEl || rootEl;
+		evt.items = multiDragElements || [];
 		evt.clone = cloneEl;
+		evt.clones = multiDragClones || [];
 
 		evt.oldIndex = startIndex;
 		evt.newIndex = newIndex;
@@ -2006,7 +2112,8 @@
 					mouseOnAxis > targetS1 + (targetLength * (1 - swapThreshold) / 2) &&
 					mouseOnAxis < targetS2 - (targetLength * (1 - swapThreshold) / 2)
 				) {
-					return ((mouseOnAxis > targetS1 + targetLength / 2) ? -1 : 1);
+					return _getInsertDirection(target);
+					// return ((mouseOnAxis > targetS1 + targetLength / 2) ? -1 : 1);
 				}
 			}
 		}
@@ -2035,8 +2142,8 @@
 	 * @return {Number}                   Direction dragEl must be swapped
 	 */
 	function _getInsertDirection(target, options) {
-		var dragElIndex = _index(dragEl, options.draggable),
-			targetIndex = _index(target, options.draggable);
+		var dragElIndex = _index(dragEl),
+			targetIndex = _index(target);
 
 		if (dragElIndex < targetIndex) {
 			return 1;
@@ -2068,10 +2175,9 @@
 	 * Returns the index of an element within its parent for a selected set of
 	 * elements
 	 * @param  {HTMLElement} el
-	 * @param  {selector} selector
 	 * @return {number}
 	 */
-	function _index(el, selector) {
+	function _index(el) {
 		var index = 0;
 
 		if (!el || !el.parentNode) {
@@ -2180,7 +2286,6 @@
 	 * @param  {HTMLElement} el                The element whose boundingClientRect is wanted
 	 * @param  {[HTMLElement]} container       the parent the element will be placed in
 	 * @param  {[Boolean]} adjustForTransform  Whether the rect should compensate for parent's transform
-	 * (used for fixed positioning on el)
 	 * @return {Object}                        The boundingClientRect of el
 	 */
 	function _getRect(el, container, adjustForTransform) {
@@ -2194,7 +2299,7 @@
 			height,
 			width;
 
-		if (el !== win) {
+		if (el !== win && el !== _getWindowScrollingElement()) {
 			elRect = el.getBoundingClientRect();
 			top = elRect.top;
 			left = elRect.left;
@@ -2266,10 +2371,10 @@
 	 * Checks if a side of an element is scrolled past a side of it's parents
 	 * @param  {HTMLElement}  el       The element who's side being scrolled out of view is in question
 	 * @param  {String}       side     Side of the element in question ('top', 'left', 'right', 'bottom')
-	 * @return {Boolean}               Whether the element is overflowing the viewport on the given side of it's parent
+	 * @return {HTMLElement}           The parent scroll element that the el's side is scrolled past, or null if there is no such element
 	 */
 	function _isScrolledPast(el, side) {
-		var parent = _getParentAutoScrollElement(parent, true),
+		var parent = _getParentAutoScrollElement(el, true),
 			elSide = _getRect(el)[side];
 
 		/* jshint boss:true */
@@ -2283,14 +2388,33 @@
 				visible = elSide <= parentSide;
 			}
 
-			if (!visible) return true;
+			if (!visible) return parent;
 
-			if (parent === win) break;
+			if (parent === _getWindowScrollingElement()) break;
 
 			parent = _getParentAutoScrollElement(parent, false);
 		}
 
 		return false;
+	}
+
+	function _insertMultiDrag(clones) {
+		var multiDrags = clones ? multiDragClones : multiDragElements;
+		for (var i = 0; i < multiDrags.length; i++) {
+			var target = rootEl.children[multiDrags[i].sortableIndex];
+			if (target) {
+				rootEl.insertBefore(multiDrags[i], target);
+			} else {
+				rootEl.appendChild(multiDrags[i]);
+			}
+		}
+	}
+
+	function _removeMultiDragElements() {
+		for (var i = 0; i < multiDragElements.length; i++) {
+			if (multiDragElements[i] === dragEl) continue;
+			multiDragElements[i].parentNode && multiDragElements[i].parentNode.removeChild(multiDragElements[i]);
+		}
 	}
 
 	// Fixed #973:
